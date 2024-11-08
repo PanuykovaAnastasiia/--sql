@@ -1,0 +1,32 @@
+WITH RECURSIVE session_cte AS (
+    -- Базовый случай: выбираем самое раннее событие для каждого пользователя как начало новой сессии
+    SELECT user_id, event_time, event_time AS session_start, 1 AS session_id
+    FROM logs l
+    WHERE event_time IN (SELECT MIN(event_time) FROM logs WHERE user_id = l.user_id)
+    
+    UNION ALL
+    
+    -- Рекурсивный случай: проверяем, является ли текущее событие продолжением текущей сессии
+    SELECT l.user_id, l.event_time,
+        CASE 
+            WHEN l.event_time - s.event_time <= INTERVAL '5 minutes' THEN s.session_start 
+            ELSE l.event_time 
+        END AS session_start,
+        CASE 
+            WHEN l.event_time - s.event_time <= INTERVAL '5 minutes' THEN s.session_id 
+            ELSE s.session_id + 1 
+        END AS session_id
+    FROM session_cte s
+    JOIN logs l ON s.user_id = l.user_id AND l.event_time > s.event_time
+)
+SELECT 
+    t.value
+FROM (SELECT user_id, value, COUNT(value) OVER (PARTITION BY user_id, value) AS cnt
+    FROM logs 
+    WHERE event_type = 'template_selected') AS t
+-- Присоединяем результат из session_cte, чтобы учитывать сессии
+JOIN session_cte s ON t.user_id = s.user_id
+WHERE t.cnt >= 2
+GROUP BY t.user_id, t.value
+ORDER BY t.value DESC
+LIMIT 5;
